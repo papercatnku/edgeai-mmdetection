@@ -2,10 +2,10 @@
 #conda install -y cython
 
 echo "Installing pytorch"
-pip3 install --no-input torch==1.10.0+cu113 -f https://download.pytorch.org/whl/torch_stable.html
+pip3 install --no-input torch==1.10.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 
 echo "Installing mmcv"
-pip3 install --no-input mmcv-full==1.4.7 -f https://download.openmmlab.com/mmcv/dist/cu113/torch1.10.0/index.html
+pip3 install --no-input mmcv-full==1.4.7 -f https://download.openmmlab.com/mmcv/dist/cu111/torch1.10.0/index.html
 
 echo "Installing mmdetection"
 echo "For more details, see: https://github.com/open-mmlab/mmdetection/blob/master/docs/get_started.md and https://github.com/open-mmlab/mmdetection"
