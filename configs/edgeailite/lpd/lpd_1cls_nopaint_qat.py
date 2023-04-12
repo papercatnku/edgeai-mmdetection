@@ -17,18 +17,18 @@ data_root = '/media/112new_sde/LPD/LPDAnnotations/coco_style/cls_1_nopaint/'
 img_norm_cfg = dict(mean=[0.0, 0.0, 0.0], std=[1.0, 1.0, 1.0], to_rgb=False)
 
 # quantization 
-quantitize = 'training' # 
+quantize = 'training' # 
 convert_to_lite_model = dict(group_size_dw=None)
 
 interval = 10
 
 
 
-# no quantitize setting
-if quantitize:
-    samples_per_gpu = samples_per_gpu//2
+# no quantize setting
+if quantize:
+    samples_per_gpu = samples_per_gpu //4
     load_from = '/media/112new_sde/ModelZoo/lpd/lpd_1cls_640_anpu_strdie16/epoch_25.pth'
-    max_epochs = (1 if quantitize == 'calibration' else 10)
+    max_epochs = (1 if quantize == 'calibration' else 10)
     initial_learning_rate = 1e-4
     num_last_epochs = max_epochs//2
     interval = 1

@@ -34,13 +34,17 @@ class BBoxTestMixin(object):
                 with shape (n,)
         """
         outs = self.forward(feats)
+
+        if torch.onnx.is_in_onnx_export():
+            return outs
+        
         results_list = self.get_bboxes(
             *outs, img_metas=img_metas, rescale=rescale)
 
-        if torch.onnx.is_in_onnx_export():
-            if self.with_intermediate_outputs:
-                results_list = list(results_list)
-                results_list.extend(outs)
+        # if torch.onnx.is_in_onnx_export():
+        #     if self.with_intermediate_outputs:
+        #         results_list = list(results_list)
+        #         results_list.extend(outs)
             #
         #
         return results_list

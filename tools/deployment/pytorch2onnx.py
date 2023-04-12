@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+# modified, no it only used for tidl qat model convert to onnx
 import argparse
 import os.path as osp
 import warnings
@@ -32,7 +33,9 @@ def pytorch2onnx(args,
                  test_img=None,
                  do_simplify=False,
                  dynamic_export=None,
-                 skip_postprocess=False):
+                 skip_postprocess=False,
+                 output_names=None,
+                 ):
 
     input_config = {
         'input_shape': input_shape,
@@ -43,25 +46,10 @@ def pytorch2onnx(args,
     one_img, one_meta = preprocess_example_input(input_config)
     img_list, img_meta_list = [one_img], [[one_meta]]
 
-    if skip_postprocess:
-        warnings.warn('Not all models support export onnx without post '
-                      'process, especially two stage detectors!')
-        model.forward = model.forward_dummy
-        torch.onnx.export(
-            model,
-            one_img,
-            output_file,
-            input_names=['input'],
-            export_params=True,
-            keep_initializers_as_inputs=True,
-            do_constant_folding=True,
-            verbose=show,
-            opset_version=opset_version)
 
-        print(f'Successfully exported ONNX model without '
-              f'post process: {output_file}')
-        return
-
+    if is_mmdet_quant_module(model):
+        model.module.bbox_head.pure_intermediate_outputs = skip_postprocess
+    
     # replace original forward function
     origin_forward = model.forward
     model.forward = partial(
@@ -69,12 +57,11 @@ def pytorch2onnx(args,
         img_metas=img_meta_list,
         return_loss=False,
         rescale=False)
+    
+    if is_mmdet_quant_module(model):
+        model_org = model.module
 
-    output_names = ['dets', 'labels']
-    model_org = model.module if is_mmdet_quant_module(model) else model
-    if model_org.with_mask:
-        output_names.append('masks')
-    input_name = 'input'
+        input_name = 'input'
     dynamic_axes = None
     if dynamic_export:
         dynamic_axes = {
@@ -94,15 +81,20 @@ def pytorch2onnx(args,
         }
         if model_org.with_mask:
             dynamic_axes['masks'] = {0: 'batch', 1: 'num_dets'}
-
+    
     # export the full onnx file
     model.with_intermediate_outputs = True
+    if is_mmdet_quant_module(model):
+        model.module.bbox_head.with_intermediate_outputs = True
+    else:
+        model.bbox_head.with_intermediate_outputs = True
+
     torch.onnx.export(
         model,
         img_list,
         output_file,
         input_names=[input_name],
-        output_names=None,
+        output_names=output_names,
         export_params=True,
         keep_initializers_as_inputs=True,
         do_constant_folding=True,
@@ -110,172 +102,187 @@ def pytorch2onnx(args,
         opset_version=opset_version,
         dynamic_axes=dynamic_axes,
     )
-    onnx_model = onnx.load(output_file)
-    feature_names = [node.name for node in onnx_model.graph.output[2:]]
-    for opt in onnx_model.graph.output[2:]:
-        onnx_model.graph.output.remove(opt)
-    #
-    for opt_name, opt in zip(output_names, onnx_model.graph.output[:2]):
-        name_changed = False
-        for node in onnx_model.graph.node:
-            for node_o_idx in range(len(node.output)):
-                if node.output[node_o_idx] == opt.name:
-                    node.output[node_o_idx] = opt_name
-                    opt.name = opt_name
-                    name_changed = True
-                    break
-                #
-            #
-            if name_changed:
-                break
-            #
-        #
-    #
-    # make model
-    opset = onnx.OperatorSetIdProto()
-    opset.version = opset_version
-    onnx_model = onnx.helper.make_model(onnx_model.graph, opset_imports=[opset])
-    # check model and save
-    onnx.checker.check_model(onnx_model)
-    onnx.save(onnx_model, output_file)
-    # shape inference to make it easy for inference
-    onnx.shape_inference.infer_shapes_path(output_file, output_file)
-    # write prototxt
-    save_model_proto(cfg, model, img_list, output_file, feature_names=feature_names, output_names=output_names)
-    model.with_intermediate_outputs = False
-
-    # # export the partial onnx file
-    # onnx_proto_file = osp.splitext(output_file)[0] + '-proto.onnx'
-    # model.forward = model.forward_dummy
-    # torch.onnx.export(
-    #     model,
-    #     img_list[0],
-    #     onnx_proto_file,
-    #     input_names=[input_name],
-    #     output_names=None,
-    #     export_params=True,
-    #     keep_initializers_as_inputs=True,
-    #     do_constant_folding=True,
-    #     verbose=show,
-    #     opset_version=opset_version,
-    #     dynamic_axes=dynamic_axes)
-    # onnx_model = onnx.load(onnx_proto_file)
-    # feature_names = [node.name for node in onnx_model.graph.output]
-    # # shape inference is required to support onnx+proto detection models in edgeai-tidl-tools
-    # onnx.shape_inference.infer_shapes_path(onnx_proto_file, onnx_proto_file)
-    # save_model_proto(cfg, model, img_list, onnx_proto_file, feature_names=feature_names, output_names=output_names)
-
-    model.forward = origin_forward
-
-    # get the custom op path
-    ort_custom_op_path = ''
-    try:
-        from mmcv.ops import get_onnxruntime_op_path
-        ort_custom_op_path = get_onnxruntime_op_path()
-    except (ImportError, ModuleNotFoundError):
-        warnings.warn('If input model has custom op from mmcv, \
-            you may have to build mmcv with ONNXRuntime from source.')
 
     if do_simplify:
-        import onnxsim
-
-        from mmdet import digit_version
-
-        min_required_version = '0.3.0'
-        assert digit_version(onnxsim.__version__) >= digit_version(
-            min_required_version
-        ), f'Requires to install onnx-simplify>={min_required_version}'
-
-        input_dic = {'input': img_list[0].detach().cpu().numpy()}
-        model_opt, check_ok = onnxsim.simplify(
-            output_file,
-            input_data=input_dic,
-            custom_lib=ort_custom_op_path,
-            dynamic_input_shape=dynamic_export)
-        if check_ok:
-            onnx.save(model_opt, output_file)
-            print(f'Successfully simplified ONNX model: {output_file}')
-        else:
-            warnings.warn('Failed to simplify ONNX model.')
-    print(f'Successfully exported ONNX model: {output_file}')
-
-    # onnx model does not have the quant hooks, so in quant mode the outputs won't match
+        # simplify onnx model
+        from onnxsim import simplify
+        model_simp, check = simplify(output_file)
+        assert check, "Simplified ONNX model could not be validated"
+        onnx.save(model_simp, output_file)
+    
     if verify:
-        from mmdet.core import get_classes
-        from mmdet.apis import show_result_pyplot
-        model.CLASSES = get_classes(dataset)
-        num_classes = len(model.CLASSES)
-        # check by onnx
-        onnx_model = onnx.load(output_file)
-        onnx.checker.check_model(onnx_model)
+        # TODO: implement verify
+        pass
 
-        # wrap onnx model
-        onnx_model = ONNXRuntimeDetector(output_file, model.CLASSES, 0)
-        if dynamic_export:
-            # scale up to test dynamic shape
-            h, w = [int((_ * 1.5) // 32 * 32) for _ in input_shape[2:]]
-            h, w = min(1344, h), min(1344, w)
-            input_config['input_shape'] = (1, 3, h, w)
 
-        if test_img is None:
-            input_config['input_path'] = input_img
 
-        # prepare input once again
-        one_img, one_meta = preprocess_example_input(input_config)
-        img_list, img_meta_list = [one_img], [[one_meta]]
+    # ##
+    # onnx_model = onnx.load(output_file)
+    # feature_names = [node.name for node in onnx_model.graph.output[2:]]
+    # for opt in onnx_model.graph.output[2:]:
+    #     onnx_model.graph.output.remove(opt)
+    # #
+    # for opt_name, opt in zip(output_names, onnx_model.graph.output[:2]):
+    #     name_changed = False
+    #     for node in onnx_model.graph.node:
+    #         for node_o_idx in range(len(node.output)):
+    #             if node.output[node_o_idx] == opt.name:
+    #                 node.output[node_o_idx] = opt_name
+    #                 opt.name = opt_name
+    #                 name_changed = True
+    #                 break
+    #             #
+    #         #
+    #         if name_changed:
+    #             break
+    #         #
+    #     #
+    # #
+    # # make model
+    # opset = onnx.OperatorSetIdProto()
+    # opset.version = opset_version
+    # onnx_model = onnx.helper.make_model(onnx_model.graph, opset_imports=[opset])
+    # # check model and save
+    # onnx.checker.check_model(onnx_model)
+    # onnx.save(onnx_model, output_file)
+    # # shape inference to make it easy for inference
+    # onnx.shape_inference.infer_shapes_path(output_file, output_file)
+    # # write prototxt
+    # save_model_proto(cfg, model, img_list, output_file, feature_names=feature_names, output_names=output_names)
+    # model.with_intermediate_outputs = False
 
-        # get pytorch output
-        with torch.no_grad():
-            pytorch_results = model(
-                img_list,
-                img_metas=img_meta_list,
-                return_loss=False,
-                rescale=True)[0]
+    # # # export the partial onnx file
+    # # onnx_proto_file = osp.splitext(output_file)[0] + '-proto.onnx'
+    # # model.forward = model.forward_dummy
+    # # torch.onnx.export(
+    # #     model,
+    # #     img_list[0],
+    # #     onnx_proto_file,
+    # #     input_names=[input_name],
+    # #     output_names=None,
+    # #     export_params=True,
+    # #     keep_initializers_as_inputs=True,
+    # #     do_constant_folding=True,
+    # #     verbose=show,
+    # #     opset_version=opset_version,
+    # #     dynamic_axes=dynamic_axes)
+    # # onnx_model = onnx.load(onnx_proto_file)
+    # # feature_names = [node.name for node in onnx_model.graph.output]
+    # # # shape inference is required to support onnx+proto detection models in edgeai-tidl-tools
+    # # onnx.shape_inference.infer_shapes_path(onnx_proto_file, onnx_proto_file)
+    # # save_model_proto(cfg, model, img_list, onnx_proto_file, feature_names=feature_names, output_names=output_names)
 
-        img_list = [_.cuda().contiguous() for _ in img_list]
-        if dynamic_export:
-            img_list = img_list + [_.flip(-1).contiguous() for _ in img_list]
-            img_meta_list = img_meta_list * 2
-        # get onnx output
-        onnx_results = onnx_model(
-            img_list, img_metas=img_meta_list, return_loss=False)[0]
-        # visualize predictions
-        score_thr = 0.3
-        if show:
-            out_file_ort, out_file_pt = None, None
-        else:
-            out_file_ort, out_file_pt = 'show-ort.png', 'show-pt.png'
+    # model.forward = origin_forward
 
-        show_img = one_meta['show_img']
-        model.show_result(
-            show_img,
-            pytorch_results,
-            score_thr=score_thr,
-            show=True,
-            win_name='PyTorch',
-            out_file=out_file_pt)
-        onnx_model.show_result(
-            show_img,
-            onnx_results,
-            score_thr=score_thr,
-            show=True,
-            win_name='ONNXRuntime',
-            out_file=out_file_ort)
+    # # get the custom op path
+    # ort_custom_op_path = ''
+    # try:
+    #     from mmcv.ops import get_onnxruntime_op_path
+    #     ort_custom_op_path = get_onnxruntime_op_path()
+    # except (ImportError, ModuleNotFoundError):
+    #     warnings.warn('If input model has custom op from mmcv, \
+    #         you may have to build mmcv with ONNXRuntime from source.')
 
-        # compare a part of result
-        if model.with_mask:
-            compare_pairs = list(zip(onnx_results, pytorch_results))
-        else:
-            compare_pairs = [(onnx_results, pytorch_results)]
-        err_msg = 'The numerical values are different between Pytorch' + \
-                  ' and ONNX, but it does not necessarily mean the' + \
-                  ' exported ONNX model is problematic.'
-        # check the numerical value
-        for onnx_res, pytorch_res in compare_pairs:
-            for o_res, p_res in zip(onnx_res, pytorch_res):
-                np.testing.assert_allclose(
-                    o_res, p_res, rtol=1e-03, atol=1e-05, err_msg=err_msg)
-        print('The numerical values are the same between Pytorch and ONNX')
+    # if do_simplify:
+    #     import onnxsim
+
+    #     from mmdet import digit_version
+
+    #     min_required_version = '0.3.0'
+    #     assert digit_version(onnxsim.__version__) >= digit_version(
+    #         min_required_version
+    #     ), f'Requires to install onnx-simplify>={min_required_version}'
+
+    #     input_dic = {'input': img_list[0].detach().cpu().numpy()}
+    #     model_opt, check_ok = onnxsim.simplify(
+    #         output_file,
+    #         input_data=input_dic,
+    #         custom_lib=ort_custom_op_path,
+    #         dynamic_input_shape=dynamic_export)
+    #     if check_ok:
+    #         onnx.save(model_opt, output_file)
+    #         print(f'Successfully simplified ONNX model: {output_file}')
+    #     else:
+    #         warnings.warn('Failed to simplify ONNX model.')
+    # print(f'Successfully exported ONNX model: {output_file}')
+
+    # # onnx model does not have the quant hooks, so in quant mode the outputs won't match
+    # if verify:
+    #     from mmdet.core import get_classes
+    #     from mmdet.apis import show_result_pyplot
+    #     model.CLASSES = get_classes(dataset)
+    #     num_classes = len(model.CLASSES)
+    #     # check by onnx
+    #     onnx_model = onnx.load(output_file)
+    #     onnx.checker.check_model(onnx_model)
+
+    #     # wrap onnx model
+    #     onnx_model = ONNXRuntimeDetector(output_file, model.CLASSES, 0)
+    #     if dynamic_export:
+    #         # scale up to test dynamic shape
+    #         h, w = [int((_ * 1.5) // 32 * 32) for _ in input_shape[2:]]
+    #         h, w = min(1344, h), min(1344, w)
+    #         input_config['input_shape'] = (1, 3, h, w)
+
+    #     if test_img is None:
+    #         input_config['input_path'] = input_img
+
+    #     # prepare input once again
+    #     one_img, one_meta = preprocess_example_input(input_config)
+    #     img_list, img_meta_list = [one_img], [[one_meta]]
+
+    #     # get pytorch output
+    #     with torch.no_grad():
+    #         pytorch_results = model(
+    #             img_list,
+    #             img_metas=img_meta_list,
+    #             return_loss=False,
+    #             rescale=True)[0]
+
+    #     img_list = [_.cuda().contiguous() for _ in img_list]
+    #     if dynamic_export:
+    #         img_list = img_list + [_.flip(-1).contiguous() for _ in img_list]
+    #         img_meta_list = img_meta_list * 2
+    #     # get onnx output
+    #     onnx_results = onnx_model(
+    #         img_list, img_metas=img_meta_list, return_loss=False)[0]
+    #     # visualize predictions
+    #     score_thr = 0.3
+    #     if show:
+    #         out_file_ort, out_file_pt = None, None
+    #     else:
+    #         out_file_ort, out_file_pt = 'show-ort.png', 'show-pt.png'
+
+    #     show_img = one_meta['show_img']
+    #     model.show_result(
+    #         show_img,
+    #         pytorch_results,
+    #         score_thr=score_thr,
+    #         show=True,
+    #         win_name='PyTorch',
+    #         out_file=out_file_pt)
+    #     onnx_model.show_result(
+    #         show_img,
+    #         onnx_results,
+    #         score_thr=score_thr,
+    #         show=True,
+    #         win_name='ONNXRuntime',
+    #         out_file=out_file_ort)
+
+    #     # compare a part of result
+    #     if model.with_mask:
+    #         compare_pairs = list(zip(onnx_results, pytorch_results))
+    #     else:
+    #         compare_pairs = [(onnx_results, pytorch_results)]
+    #     err_msg = 'The numerical values are different between Pytorch' + \
+    #               ' and ONNX, but it does not necessarily mean the' + \
+    #               ' exported ONNX model is problematic.'
+    #     # check the numerical value
+    #     for onnx_res, pytorch_res in compare_pairs:
+    #         for o_res, p_res in zip(onnx_res, pytorch_res):
+    #             np.testing.assert_allclose(
+    #                 o_res, p_res, rtol=1e-03, atol=1e-05, err_msg=err_msg)
+    #     print('The numerical values are the same between Pytorch and ONNX')
 
 
 def parse_normalize_cfg(test_pipeline):
@@ -359,6 +366,19 @@ def parse_args():
         help='Whether to export model without post process. Experimental '
         'option. We do not guarantee the correctness of the exported '
         'model.')
+
+    parser.add_argument(
+        '--merge-strides',
+        action='store_true',
+        help='Whether to export model with merging results by different stride branches, this option is only valid when skip_postprocess is True. Experimental')
+    
+    parser.add_argument(
+        '--output-names',
+        type=lambda x: [x.strip() for x in x.split(',')],
+        default=['pred_cls','pred_obj','pred_bbox'],
+        help='Output names of the exported model. If not specified, use default in onnx export'
+    )
+
     args = parser.parse_args()
     return args
 
@@ -418,7 +438,9 @@ def main(args):
         test_img=args.test_img,
         do_simplify=args.simplify,
         dynamic_export=args.dynamic_export,
-        skip_postprocess=args.skip_postprocess)
+        skip_postprocess=args.skip_postprocess,
+        output_names=args.output_names,
+        )
 
     # Following strings of text style are from colorama package
     bright_style, reset_style = '\x1b[1m', '\x1b[0m'

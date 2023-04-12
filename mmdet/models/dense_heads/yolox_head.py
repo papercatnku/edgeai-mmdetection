@@ -181,6 +181,7 @@ class YOLOXHead(BaseDenseHead, BBoxTestMixin):
             conv_cls.bias.data.fill_(bias_init)
             conv_obj.bias.data.fill_(bias_init)
 
+    #!WARNING tidl not support reshape, will not split obj, cls and bbox
     def forward_single(self, x, cls_convs, reg_convs, conv_cls, conv_reg,
                        conv_obj):
         """Forward feature of a single scale level."""
@@ -193,7 +194,7 @@ class YOLOXHead(BaseDenseHead, BBoxTestMixin):
         objectness = conv_obj(reg_feat)
 
         if torch.onnx.is_in_onnx_export():
-            outs = torch.cat((bbox_pred, objectness, cls_score), dim=1)
+            outs = torch.cat((objectness, cls_score,bbox_pred), dim=1)
             return (outs,)
         else:
             return cls_score, bbox_pred, objectness
