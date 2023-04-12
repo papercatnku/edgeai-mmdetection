@@ -45,13 +45,17 @@ outfile = os.path.join(work_dir,'model.onnx')
 date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 opset_version = 11
 
+input_image_path = '/media/112new_sde/ModelZoo/lpd/apa_rearview_lite/000000000000.jpg'
+
 cfg = mmcv.Config.fromfile(config)
 input_size = cfg.input_size if hasattr(cfg, 'input_size') else None #(512,512)
 assert input_size is not None, 'input_size could not be obtained automatically - please populate manually'
 
 print(f'Exporting onnx+proto model for: {config} @ {date} with input_size {input_size}')
 sys.argv = [sys.argv[0], f'{config}', f'{checkpoint}', f'--shape', f'{input_size[0]}', f'{input_size[1]}',
-            f'--opset-version', f'{opset_version}',  f'--out={outfile}']
+            f'--input-img', f'{input_image_path}',
+            f'--opset-version', f'{opset_version}',  f'--out={outfile}', '--simplify','--skip-postprocess'
+            ]
 args = pytorch2onnx.parse_args()
 pytorch2onnx.main(args)
 

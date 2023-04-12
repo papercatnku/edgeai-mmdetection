@@ -312,7 +312,7 @@ class CSPDarknet(BaseModule):
                 act_cfg=act_cfg)
             stage.append(conv_layer)
             if use_spp:
-                spp = SPPBottleneck(
+                spp = SPPFBottleneck(
                     out_channels,
                     out_channels,
                     kernel_sizes=spp_kernal_sizes,
