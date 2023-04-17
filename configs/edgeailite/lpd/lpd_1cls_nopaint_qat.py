@@ -1,6 +1,5 @@
 _base_ = [
-    '../_xbase_/hyper_params/yolox_config.py',
-    '../_xbase_/hyper_params/yolox_schedule.py',
+    '../_xbase_/hyper_params/dcp_lpd_config.py',
 ]
 
 img_scale = (640,640)
@@ -24,8 +23,8 @@ interval = 10
 
 # no quantize setting
 if quantize:
-    samples_per_gpu = samples_per_gpu // 4
-    load_from = '/media/112new_sde/ModelZoo/lpd/lpd_1cls_640_anpu_strdie16/best_bbox_mAP_epoch_92.pth'
+    samples_per_gpu = samples_per_gpu // 2
+    load_from = '/media/112new_sde/ModelZoo/lpd/lpd_1cls_640_anpu_strdie16/best_bbox_mAP_epoch_99.pth'
     max_epochs = (1 if quantize == 'calibration' else 10)
     initial_learning_rate = 1e-4
     num_last_epochs = max_epochs//2
@@ -185,26 +184,17 @@ custom_hooks = [
         priority=49)
 ]
 
-# optimizer = dict(
-#     type='SGD',lr=initial_learning_rate, momentum=0.9,
-#     weight_decay=5e-4,
-#     nesterov=True,
-#     paramwise_cfg=dict(norm_decay_mult=0., bias_decay_mult=0.)
-# )
-
-# optimizer_config = dict(grad_clip=None,detect_anomalous_params=True)
 
 
-# lr_config = dict(
-#     num_last_epochs=num_last_epochs,
-#     policy='YOLOX',
-#     warmup='exp',
-#     by_epoch=False,
-#     warmup_by_epoch=True,
-#     warmup_ratio=1,
-#     warmup_iters=5,  # 5 epoch
-#     num_last_epochs=num_last_epochs,
-#     min_lr_ratio=0.05)
+lr_config = dict(
+    num_last_epochs=num_last_epochs,
+    policy='YOLOX',
+    warmup='exp',
+    by_epoch=False,
+    warmup_by_epoch=True,
+    warmup_ratio=1,
+    warmup_iters=3,  # 5 epoch
+    min_lr_ratio=0.05)
 
 evaluation = dict(
     save_best='auto',

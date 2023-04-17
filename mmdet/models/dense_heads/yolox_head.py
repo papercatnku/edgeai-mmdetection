@@ -1,5 +1,5 @@
-# Copyright (c) OpenMMLab. All rights reserved.
 import math
+# Copyright (c) OpenMMLab. All rights reserved.
 
 import torch
 import torch.nn as nn
@@ -193,11 +193,19 @@ class YOLOXHead(BaseDenseHead, BBoxTestMixin):
         bbox_pred = conv_reg(reg_feat)
         objectness = conv_obj(reg_feat)
 
-        if torch.onnx.is_in_onnx_export():
-            outs = torch.cat((objectness, cls_score,bbox_pred), dim=1)
-            return (outs,)
-        else:
-            return cls_score, bbox_pred, objectness
+        # cat is deprecated here for 2 reasons
+            # 1. if concat along each head type(obj, cls, bbox) reshape is not supported by tidl convertor
+            # 2. if concat along each stride(eg, 8,16,32) converted ouput will be quantitized with same zeropoint and scale when deploy with anpu/neat, this may reduce inference accuracy.
+
+        # ALTERNATIVE but not Recommended 
+        # if torch.onnx.is_in_onnx_export():
+            # outs = torch.cat((objectness, cls_score,bbox_pred), dim=1)
+            # return (outs,)
+        # else:
+            # return cls_score, bbox_pred, objectness
+            
+        # WARNING: TIDL support max 15 outputs, so when head num is large for each stride, it will also cause a big trouble!
+        return cls_score, bbox_pred, objectness
 
     def forward(self, feats):
         """Forward features from the upstream network.

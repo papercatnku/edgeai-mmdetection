@@ -1,6 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from mmcv.parallel import is_module_wrapper
 from mmcv.runner.hooks import HOOKS, Hook
+import warnings
+from mmdet.utils import is_mmdet_quant_module
 
 
 @HOOKS.register_module()
@@ -44,7 +46,13 @@ class YOLOXModeSwitchHook(Hook):
                 train_loader._iterator = None
                 self._restart_dataloader = True
             runner.logger.info('Add additional L1 loss now!')
-            model.bbox_head.use_l1 = True
+            try:
+                model.bbox_head.use_l1 = True
+            except:
+                warnings.warn('The model does not have bbox_head. Most Likely a xnn model surgery is done.')
+                if(is_mmdet_quant_module(model)):
+                    model.module.bbox_head.use_l1=True
+                
         else:
             # Once the restart is complete, we need to restore
             # the initialization flag.
