@@ -37,7 +37,7 @@ else:
     load_from = None 
     max_epochs = 100
     initial_learning_rate = 0.01
-    num_last_epochs = 10
+    num_last_epochs = 11
     interval = 5
     resume_from = None
 
@@ -147,7 +147,7 @@ train_dataset = dict(
                 dict(type='LoadAnnotations', with_bbox=True)
             ]
     ),
-        pipeline=train_pipeline),
+    pipeline=train_pipeline)
     
 
 data = dict(

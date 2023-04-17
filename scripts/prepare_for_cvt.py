@@ -51,7 +51,7 @@ def make_ds_for_tidl_cvt(args):
     shuffle(fn_ls)
     fn_ls = fn_ls[:args.n]
     for i,fn in track(enumerate(fn_ls)):
-        img_path = f'{i:0<4}.png'
+        img_path = f'{i:0>4}.png'
         srcimg_fn = os.path.join(args.img_dir, fn)
         dstimg_fn = os.path.join(cvtted_img_dir, img_path)
         wh = (args.shape[1],args.shape[0])

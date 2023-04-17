@@ -5,7 +5,7 @@ _base_ = [
 
 img_scale = (640,640)
 input_size = img_scale
-samples_per_gpu = 64
+samples_per_gpu = 32
 
 CLASSES =["LP"]
     
@@ -22,12 +22,10 @@ convert_to_lite_model = dict(group_size_dw=None)
 
 interval = 10
 
-
-
 # no quantize setting
 if quantize:
-    samples_per_gpu = samples_per_gpu //4
-    load_from = '/media/112new_sde/ModelZoo/lpd/lpd_1cls_640_anpu_strdie16/epoch_25.pth'
+    samples_per_gpu = samples_per_gpu // 4
+    load_from = '/media/112new_sde/ModelZoo/lpd/lpd_1cls_640_anpu_strdie16/best_bbox_mAP_epoch_92.pth'
     max_epochs = (1 if quantize == 'calibration' else 10)
     initial_learning_rate = 1e-4
     num_last_epochs = max_epochs//2
@@ -147,7 +145,7 @@ train_dataset = dict(
                 dict(type='LoadAnnotations', with_bbox=True)
             ]
     ),
-        pipeline=train_pipeline),
+        pipeline=train_pipeline)
     
 
 data = dict(
